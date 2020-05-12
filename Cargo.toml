@@ -1,0 +1,12 @@
+[package]
+name = "triodia"
+version = "0.1.0"
+authors = ["Andrew Pendleton <andrew@mapbox.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+geojson = "0.18.0"
+anyhow = "1.0.28"
+serde_json = "~1.0"
