@@ -4,18 +4,23 @@ use indexmap::IndexMap;
 use serde_json::Value as JsonValue;
 use static_bushes::{FlatBushBuilder, FlatBush};
 
+use std::convert::TryInto;
 use std::env;
 use std::fs::File;
 use std::io::{self, BufRead};
 
+use crate::util::StringCacheBuilder;
+
 pub struct Index {
     clusters: Vec<Cluster>,
     name_cache: Vec<String>,
+    number_cache: Vec<String>,
     bush: FlatBush<f64>
 }
 
 pub fn load(filename: &str) -> Result<Index, Error> {
-    let mut name_cache: IndexMap<String, usize> = IndexMap::new();
+    let mut name_cache = StringCacheBuilder::new();
+    let mut number_cache = StringCacheBuilder::new();
     let mut clusters = Vec::new();
     let mut builder = FlatBushBuilder::new();
 
@@ -24,7 +29,7 @@ pub fn load(filename: &str) -> Result<Index, Error> {
         let lineno = zlineno + 1;
         let line = line.unwrap();
         if line.trim().len() > 0 {
-            match process_row(&line, &mut name_cache) {
+            match process_row(&line, &mut name_cache, &mut number_cache) {
                 Ok((cluster, bounds)) => {
                     clusters.push(cluster);
                     builder.add(bounds);
@@ -38,15 +43,16 @@ pub fn load(filename: &str) -> Result<Index, Error> {
     }
 
     let bush = builder.finish();
-    let name_cache: Vec<String> = name_cache.into_iter().map(|(k, _v)| k).collect();
+    let name_cache = name_cache.finish();
+    let number_cache = number_cache.finish();
 
-    Ok(Index { clusters, name_cache, bush })
+    Ok(Index { clusters, name_cache, number_cache, bush })
 }
 
 #[derive(Debug)]
 enum AddressNumber {
-    U64(u64),
-    String(String)
+    U32(u32),
+    String(u32)
 }
 
 #[derive(Debug)]
@@ -59,12 +65,12 @@ struct AddressPoint {
 struct Cluster {
     id: u64,
     points: Vec<AddressPoint>,
-    names: Vec<usize>
+    names: Vec<u32>
 }
 
 type Bounds = [f64; 4];
 
-fn process_row(line: &str, name_cache: &mut IndexMap<String, usize>) -> Result<(Cluster, Bounds), anyhow::Error> {
+fn process_row(line: &str, name_cache: &mut StringCacheBuilder, number_cache: &mut StringCacheBuilder) -> Result<(Cluster, Bounds), anyhow::Error> {
     let data = line.parse::<GeoJson>().map_err(|_| anyhow!("failed to parse line"))?;
     let feat = if let GeoJson::Feature(feat) = data {
         feat
@@ -88,20 +94,21 @@ fn process_row(line: &str, name_cache: &mut IndexMap<String, usize>) -> Result<(
                 // might be a string, or not
                 match n {
                     JsonValue::String(s) => {
-                        match s.parse::<u64>() {
-                            Ok(u_num) => AddressNumber::U64(u_num),
-                            _ => AddressNumber::String(s.clone())
+                        match s.parse::<u32>() {
+                            Ok(u_num) => AddressNumber::U32(u_num),
+                            _ => AddressNumber::String(number_cache.get_id(s.clone()))
                         }
                     },
                     JsonValue::Number(json_num) => {
                         // maybe we can use it, maybe not
-                        match json_num.as_u64() {
-                            Some(u_num) => AddressNumber::U64(u_num),
-                            // it's a float or negative or something -- stringify
-                            _ => AddressNumber::String(format!("{}", json_num))
+                        let num_u32: Option<u32> = json_num.as_u64().map(|n| n.try_into().ok()).flatten();
+                        match num_u32 {
+                            Some(u_num) => AddressNumber::U32(u_num),
+                            // it's a float or negative or something, or it doesn't fit in a u32 -- stringify
+                            _ => AddressNumber::String(number_cache.get_id(format!("{}", json_num)))
                         }
                     },
-                    _ => AddressNumber::String(format!("{}", n))
+                    _ => AddressNumber::String(number_cache.get_id(format!("{}", n)))
                 }
             });
             (idx, nums)
@@ -138,11 +145,8 @@ fn process_row(line: &str, name_cache: &mut IndexMap<String, usize>) -> Result<(
         AddressPoint { point, number }
     }).collect();
 
-    let names: Vec<usize> = if let Some(JsonValue::String(s)) = props.get("carmen:text") {
-        s.split(",").map(|t| {
-            let maybe_id = name_cache.len();
-            *(name_cache.entry(t.to_string()).or_insert(maybe_id))
-        }).collect()
+    let names: Vec<u32> = if let Some(JsonValue::String(s)) = props.get("carmen:text") {
+        s.split(",").map(|t| name_cache.get_id(t.to_string())).collect()
     } else {
         return Err(anyhow!("no valid names"));
     };

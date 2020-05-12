@@ -1,6 +1,7 @@
 use std::env;
 
 mod load;
+mod util;
 pub use load::{load, Index};
 
 fn main() {
