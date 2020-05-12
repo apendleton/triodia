@@ -1,6 +1,8 @@
-use geojson::{GeoJson, Value, feature::Id, Geometry};
 use anyhow::{anyhow, Error};
+use geojson::{GeoJson, Value, feature::Id, Geometry};
+use indexmap::IndexMap;
 use serde_json::Value as JsonValue;
+use static_bushes::FlatBushBuilder;
 
 use std::env;
 use std::fs::File;
@@ -13,22 +15,32 @@ fn main() {
 fn start() -> Result<(), Error> {
     let args: Vec<String> = env::args().collect();
 
+    let mut name_cache: IndexMap<String, usize> = IndexMap::new();
+    let mut clusters = Vec::new();
+    let mut builder = FlatBushBuilder::new();
+
     let filename = args.get(1).expect("must provide one filename");
     let file = File::open(filename)?;
     for (zlineno, line) in io::BufReader::new(file).lines().enumerate() {
         let lineno = zlineno + 1;
         let line = line.unwrap();
         if line.trim().len() > 0 {
-            let cluster = match process_row(&line) {
-                Ok(cluster) => cluster,
+            match process_row(&line, &mut name_cache) {
+                Ok((cluster, bounds)) => {
+                    clusters.push(cluster);
+                    builder.add(bounds);
+                }
                 Err(e) => {
                     println!("warning: skipping {} because of {:?}", lineno, e);
                     continue;
                 }
-            };
-            println!("{:?}", cluster);
+            }
         }
     }
+
+    let bush = builder.finish();
+    let name_cache: Vec<String> = name_cache.into_iter().map(|(k, _v)| k).collect();
+
     Ok(())
 }
 
@@ -48,12 +60,12 @@ struct AddressPoint {
 struct Cluster {
     id: u64,
     points: Vec<AddressPoint>,
-    names: Vec<String>
+    names: Vec<usize>
 }
 
 type Bounds = [f64; 4];
 
-fn process_row(line: &str) -> Result<(Cluster, Bounds), anyhow::Error> {
+fn process_row(line: &str, name_cache: &mut IndexMap<String, usize>) -> Result<(Cluster, Bounds), anyhow::Error> {
     let data = line.parse::<GeoJson>().map_err(|_| anyhow!("failed to parse line"))?;
     let feat = if let GeoJson::Feature(feat) = data {
         feat
@@ -68,31 +80,12 @@ fn process_row(line: &str) -> Result<(Cluster, Bounds), anyhow::Error> {
         0
     };
 
-    // grab the multipoint geometry
-    let (idx, point_pairs) = if let Some(Geometry { value: Value::GeometryCollection(collection), .. }) = feat.geometry {
-        let mut matching = collection.into_iter().enumerate().flat_map(|(idx, geom)| {
-            if let Geometry { value: Value::MultiPoint(mp), .. } = geom {
-                let array_mp = mp.into_iter().map(|p| {
-                    let mut arr = [0.0; 2];
-                    arr.copy_from_slice(&p);
-                    arr
-                });
-                Some((idx, array_mp))
-            } else {
-                None
-            }
-        });
-        matching.next().ok_or(anyhow!("line has no multipoint geometry"))?
-    } else {
-        return Err(anyhow!("line has no geometry collection"));
-    };
-
     // grab the address numbers
     let props = feat.properties.ok_or(anyhow!("feature has no properties"))?;
-    let address_numbers = if let Some(JsonValue::Array(v)) = props.get("carmen:addressnumber") {
-        let entry = v.get(idx).ok_or(anyhow!("has no entry matching the location of the multipoint geom"))?;
+    let (idx, address_numbers) = if let Some(JsonValue::Array(v)) = props.get("carmen:addressnumber") {
+        let (idx, entry) = v.iter().enumerate().skip_while(|(_, e)| **e == JsonValue::Null).next().ok_or(anyhow!("has no address numbers"))?;
         if let JsonValue::Array(num_vec) = entry {
-            num_vec.into_iter().map(|n| {
+            let nums = num_vec.into_iter().map(|n| {
                 // might be a string, or not
                 match n {
                     JsonValue::String(s) => {
@@ -111,12 +104,30 @@ fn process_row(line: &str) -> Result<(Cluster, Bounds), anyhow::Error> {
                     },
                     _ => AddressNumber::String(format!("{}", n))
                 }
-            })
+            });
+            (idx, nums)
         } else {
             return Err(anyhow!("address number list isn't an array"));
         }
     } else {
         return Err(anyhow!("feature has no address numbers"));
+    };
+
+    // grab the multipoint geometry
+    let collection = if let Some(Geometry { value: Value::GeometryCollection(collection), .. }) = feat.geometry {
+        collection
+    } else {
+        return Err(anyhow!("line has no geometry collection"));
+    };
+
+    let point_pairs = if let Some(Geometry { value: Value::MultiPoint(mp), .. }) = collection.get(idx) {
+        mp.into_iter().map(|p| {
+            let mut arr = [0.0; 2];
+            arr.copy_from_slice(&p);
+            arr
+        })
+    } else {
+        return Err(anyhow!("line has no multipoint geometry"));
     };
 
     let mut bounds = [f64::MAX, f64::MAX, f64::MIN, f64::MIN];
@@ -128,8 +139,11 @@ fn process_row(line: &str) -> Result<(Cluster, Bounds), anyhow::Error> {
         AddressPoint { point, number }
     }).collect();
 
-    let names: Vec<String> = if let Some(JsonValue::String(s)) = props.get("carmen:text") {
-        s.split(",").map(|t| t.to_string()).collect()
+    let names: Vec<usize> = if let Some(JsonValue::String(s)) = props.get("carmen:text") {
+        s.split(",").map(|t| {
+            let maybe_id = name_cache.len();
+            *(name_cache.entry(t.to_string()).or_insert(maybe_id))
+        }).collect()
     } else {
         return Err(anyhow!("no valid names"));
     };
