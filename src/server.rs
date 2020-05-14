@@ -15,7 +15,7 @@ use crate::util::{calculate_hash, web_mercator_to_wgs84};
 pub static VERSION: &str = env!("CARGO_PKG_VERSION");
 pub static MAX_BODY: u64 = 20_971_520;
 
-pub fn start(store: Arc<Index>, port: Option<u16>) -> actix_server::Server {
+pub fn start(store: Arc<Index>, port: u16) -> actix_server::Server {
     std::env::set_var("RUST_LOG", "actix_web=info");
     env_logger::init();
 
@@ -55,7 +55,7 @@ pub fn start(store: Arc<Index>, port: Option<u16>) -> actix_server::Server {
                 )
             )
     })
-        .bind(format!("0.0.0.0:{}", port.unwrap_or(8000)).as_str())
+        .bind(format!("0.0.0.0:{}", port).as_str())
         .unwrap()
         .run()
 }

@@ -12,5 +12,6 @@ async fn main() -> std::io::Result<()> {
 
     let idx = Arc::new(index::load(&filename).unwrap());
 
-    server::start(idx, None).await
+    println!("starting server on port 9005...");
+    server::start(idx, 9005).await
 }
