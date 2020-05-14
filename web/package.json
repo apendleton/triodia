@@ -1,0 +1,28 @@
+{
+  "name": "hecate-ui-wrapper",
+  "version": "1.0.0",
+  "description": "Wrapper around the Hecate Web UI",
+  "repository": "https://github.com/mapbox/Hecate",
+  "author": "Nick Ingalls <ingalls@protonmail.com>",
+  "license": "MIT",
+  "private": false,
+  "scripts": {
+    "build": "./build.sh"
+  },
+  "dependencies": {
+    "hecate-ui": "https://gitpkg.now.sh/mapbox/Hecate/web?v0.82.2",
+    "@mapbox/assembly": "^0.24.0",
+    "@mapbox/mapbox-gl-geocoder": "^4.1.2",
+    "@turf/turf": "^5.1.6",
+    "moment": "^2.22.2",
+    "vue": "^2.5.16"
+  },
+  "devDependencies": {
+    "@vue/component-compiler-utils": "3.1.0",
+    "babel-core": "^6.26.3",
+    "babel-preset-env": "^1.7.0",
+    "parcel-bundler": "^1.8.1",
+    "vue-hot-reload-api": "^2.3.0",
+    "vue-template-compiler": "^2.5.16"
+  }
+}

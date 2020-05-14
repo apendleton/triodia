@@ -1,11 +1,9 @@
 use anyhow::{anyhow, Error};
 use geojson::{GeoJson, Value, feature::Id, Geometry};
-use indexmap::IndexMap;
 use serde_json::Value as JsonValue;
 use static_bushes::{FlatBushBuilder, FlatBush};
 
 use std::convert::TryInto;
-use std::env;
 use std::fs::File;
 use std::io::{self, BufRead};
 
@@ -15,7 +13,7 @@ pub struct Index {
     clusters: Vec<Cluster>,
     name_cache: Vec<String>,
     number_cache: Vec<String>,
-    bush: FlatBush<f64>
+    flatbush: FlatBush<f64>
 }
 
 pub fn load(filename: &str) -> Result<Index, Error> {
@@ -42,11 +40,11 @@ pub fn load(filename: &str) -> Result<Index, Error> {
         }
     }
 
-    let bush = builder.finish();
+    let flatbush = builder.finish();
     let name_cache = name_cache.finish();
     let number_cache = number_cache.finish();
 
-    Ok(Index { clusters, name_cache, number_cache, bush })
+    Ok(Index { clusters, name_cache, number_cache, flatbush })
 }
 
 #[derive(Debug)]
@@ -56,7 +54,7 @@ enum AddressNumber {
 }
 
 #[derive(Debug)]
-struct AddressPoint {
+struct CompactAddressPoint {
     point: [f64; 2],
     number: AddressNumber
 }
@@ -64,7 +62,7 @@ struct AddressPoint {
 #[derive(Debug)]
 struct Cluster {
     id: u64,
-    points: Vec<AddressPoint>,
+    points: Vec<CompactAddressPoint>,
     names: Vec<u32>
 }
 
@@ -142,7 +140,7 @@ fn process_row(line: &str, name_cache: &mut StringCacheBuilder, number_cache: &m
         if point[1] < bounds[1] { bounds[1] = point[1]; }
         if point[0] > bounds[2] { bounds[2] = point[0]; }
         if point[1] > bounds[3] { bounds[3] = point[1]; }
-        AddressPoint { point, number }
+        CompactAddressPoint { point, number }
     }).collect();
 
     let names: Vec<u32> = if let Some(JsonValue::String(s)) = props.get("carmen:text") {
@@ -152,4 +150,38 @@ fn process_row(line: &str, name_cache: &mut StringCacheBuilder, number_cache: &m
     };
 
     Ok((Cluster { id, points, names }, bounds))
+}
+
+pub struct AddressPoint<'a> {
+    pub point: [f64; 2],
+    pub number: String,
+    pub cluster_id: u64,
+    pub address_position: u64,
+    pub cluster_names: Vec<&'a str>
+}
+
+impl<'a> Index {
+    pub fn query(&'a self, bbox: Bounds) -> impl Iterator<Item = AddressPoint> {
+        self.flatbush.search_range(bbox[0], bbox[1], bbox[2], bbox[3]).map(move |id| {
+            let cluster = &self.clusters[id];
+            let names: Vec<&str> = cluster.names.iter().map(|name_id| self.name_cache[*name_id as usize].as_str()).collect();
+            cluster.points.iter().enumerate().flat_map(move |(i, address)| {
+                if address.point[0] >= bbox[0] && address.point[0] <= bbox[2] && address.point[1] >= bbox[1] && address.point[1] <= bbox[3] {
+                    let number = match address.number {
+                        AddressNumber::U32(num) => num.to_string(),
+                        AddressNumber::String(id) => self.number_cache[id as usize].clone()
+                    };
+                    Some(AddressPoint {
+                        point: address.point,
+                        number,
+                        cluster_id: cluster.id,
+                        address_position: i as u64,
+                        cluster_names: names.clone()
+                    })
+                } else {
+                    None
+                }
+            })
+        }).flatten()
+    }
 }

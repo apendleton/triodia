@@ -1,12 +1,16 @@
 use std::env;
+use std::sync::Arc;
 
-mod load;
+mod index;
 mod util;
-pub use load::{load, Index};
+mod server;
 
-fn main() {
+#[actix_rt::main]
+async fn main() -> std::io::Result<()> {
     let args: Vec<String> = env::args().collect();
     let filename = args.get(1).expect("must provide one filename");
 
-    let index = load(&filename).unwrap();
+    let idx = Arc::new(index::load(&filename).unwrap());
+
+    server::start(idx, None).await
 }
