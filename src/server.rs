@@ -260,7 +260,8 @@ async fn features_query(
                 },
                 "properties": {
                     "number": item.number,
-                    "street": streets
+                    "street": streets,
+                    "cluster_id": item.cluster_id
                 }
             });
 
